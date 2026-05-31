@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/neko-server-dev/goban/internal/config"
-	"github.com/neko-server-dev/goban/internal/errfile"
-	"github.com/neko-server-dev/goban/internal/handler"
-	"github.com/neko-server-dev/goban/internal/nftables"
+	"github.com/neko-server-dev/gomanager/internal/ban"
+	"github.com/neko-server-dev/gomanager/internal/config"
+	"github.com/neko-server-dev/gomanager/internal/errfile"
+	"github.com/neko-server-dev/gomanager/internal/handler"
+	"github.com/neko-server-dev/gomanager/internal/nftables"
 )
 
 func runServe(args []string) int {
@@ -42,6 +44,20 @@ func runServe(args []string) int {
 	}
 	defer manager.Close()
 
+	service, err := openBanService(manager, *configPath)
+	if err != nil {
+		errfile.Record("ban service init", err)
+		log.Fatalf("ban service init failed: %v", err)
+	}
+	if n, err := service.CleanupExpired(); err != nil {
+		errfile.Record("expiration cleanup", err)
+	} else if n > 0 {
+		log.Printf("removed %d expired blacklist entry(ies) on startup", n)
+	}
+	service.RunCleanupLoop(time.Minute, func(err error) {
+		errfile.Record("expiration cleanup", err)
+	})
+
 	if os.Getenv("GIN_MODE") == "" {
 		gin.SetMode(gin.ReleaseMode)
 	}
@@ -58,7 +74,7 @@ func runServe(args []string) int {
 	r.GET("/health", handler.Health)
 
 	api := r.Group("/api/v1")
-	handler.NewBlacklistHandler(manager).Register(api)
+	handler.NewBlacklistHandler(service).Register(api)
 
 	addr := cfg.ListenAddr()
 	log.Printf("goban listening on %s", addr)
@@ -77,4 +93,8 @@ func openManager(cfg config.Config) (*nftables.Manager, error) {
 		ForwardChainName: cfg.ForwardChainName,
 		NICs:             cfg.NICs,
 	})
+}
+
+func openBanService(manager *nftables.Manager, configPath string) (*ban.Service, error) {
+	return ban.NewService(manager, ban.NewStore(configPath))
 }

@@ -73,31 +73,37 @@ API Endpoints:
   GET    /health
   GET    /api/v1/blacklist
   POST   /api/v1/blacklist        body: {"ip": "192.168.1.100"}
+                                  optional: "ttl": "24h" or "expires_at": "2026-06-01T00:00:00Z"
   DELETE /api/v1/blacklist/:ip
 
 Examples:
   goban serve
   goban -config /etc/goban/goban.yaml
+  curl -X POST http://localhost:8080/api/v1/blacklist -d '{"ip":"10.0.0.1","ttl":"1h"}'
 
 `)
 }
 
 func printAddHelp() {
 	fmt.Fprintf(os.Stderr, `Usage:
-  goban add <ip> [-config goban.yaml]
+  goban add <ip> [-config goban.yaml] [-ttl duration] [-expires-at RFC3339]
 
 指定した IP をブラックリストに追加します。
 IPv4 / IPv6 に対応しています。
+期限を省略した場合は無期限でブロックします。
 
 Arguments:
   ip    拒否する IP アドレス
 
 Options:
-  -config path    設定ファイルのパス（デフォルト: goban.yaml）
+  -config path       設定ファイルのパス（デフォルト: goban.yaml）
+  -ttl duration      ブロック期間（例: 1h, 30m）
+  -expires-at time   ブロック解除時刻（RFC3339）
 
 Examples:
   goban add 192.168.1.100
-  goban add 2001:db8::1
+  goban add 192.168.1.100 -ttl 24h
+  goban add 2001:db8::1 -expires-at 2026-06-01T00:00:00Z
   goban add 10.0.0.5 -config /etc/goban/goban.yaml
 
 `)
@@ -130,6 +136,7 @@ func printListHelp() {
   goban list [-config goban.yaml]
 
 ブラックリストに登録されている IP 一覧を表示します。
+期限付きエントリは解除予定時刻も表示します。
 
 Aliases:
   list, ls

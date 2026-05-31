@@ -5,10 +5,12 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"time"
 
-	"github.com/neko-server-dev/goban/internal/config"
-	"github.com/neko-server-dev/goban/internal/errfile"
-	"github.com/neko-server-dev/goban/internal/nftables"
+	"github.com/neko-server-dev/gomanager/internal/ban"
+	"github.com/neko-server-dev/gomanager/internal/config"
+	"github.com/neko-server-dev/gomanager/internal/errfile"
+	"github.com/neko-server-dev/gomanager/internal/nftables"
 )
 
 func runAdd(args []string) int {
@@ -21,6 +23,8 @@ func runAdd(args []string) int {
 	fs.SetOutput(os.Stderr)
 	fs.Usage = printAddHelp
 	configPath := fs.String("config", config.DefaultPath, "path to config file")
+	ttl := fs.String("ttl", "", "block duration (e.g. 1h, 30m)")
+	expiresAt := fs.String("expires-at", "", "block until RFC3339 timestamp")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -31,18 +35,44 @@ func runAdd(args []string) int {
 		return 1
 	}
 
-	manager, cleanup, err := openManagerFromConfig(*configPath)
+	if *ttl != "" && *expiresAt != "" {
+		fmt.Fprintln(os.Stderr, "error: specify either -ttl or -expires-at, not both")
+		return 2
+	}
+
+	service, cleanup, err := openServiceFromConfig(*configPath)
 	if err != nil {
 		return 1
 	}
 	defer cleanup()
 
+	var expiration *time.Time
+	if *ttl != "" {
+		t, err := ban.ParseTTL(*ttl)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "invalid ttl: %v\n", err)
+			return 2
+		}
+		expiration = &t
+	} else if *expiresAt != "" {
+		t, err := ban.ParseExpiresAt(*expiresAt)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "invalid expires-at: %v\n", err)
+			return 2
+		}
+		expiration = &t
+	}
+
 	ip := fs.Arg(0)
-	if err := manager.Add(ip); err != nil {
+	if err := service.Add(ip, expiration); err != nil {
 		return writeCLIError("add", err)
 	}
 
-	fmt.Printf("added: %s\n", ip)
+	if expiration != nil {
+		fmt.Printf("added: %s (expires %s)\n", ip, expiration.Format(time.RFC3339))
+	} else {
+		fmt.Printf("added: %s\n", ip)
+	}
 	return 0
 }
 
@@ -66,14 +96,14 @@ func runRemove(args []string) int {
 		return 1
 	}
 
-	manager, cleanup, err := openManagerFromConfig(*configPath)
+	service, cleanup, err := openServiceFromConfig(*configPath)
 	if err != nil {
 		return 1
 	}
 	defer cleanup()
 
 	ip := fs.Arg(0)
-	if err := manager.Remove(ip); err != nil {
+	if err := service.Remove(ip); err != nil {
 		return writeCLIError("remove", err)
 	}
 
@@ -101,29 +131,33 @@ func runList(args []string) int {
 		return 1
 	}
 
-	manager, cleanup, err := openManagerFromConfig(*configPath)
+	service, cleanup, err := openServiceFromConfig(*configPath)
 	if err != nil {
 		return 1
 	}
 	defer cleanup()
 
-	ips, err := manager.List()
+	entries, err := service.List()
 	if err != nil {
 		return writeCLIError("list", err)
 	}
 
-	if len(ips) == 0 {
+	if len(entries) == 0 {
 		fmt.Println("no blacklisted IPs")
 		return 0
 	}
 
-	for _, ip := range ips {
-		fmt.Println(ip)
+	for _, entry := range entries {
+		if entry.ExpiresAt != nil {
+			fmt.Printf("%s\texpires %s\n", entry.IP, entry.ExpiresAt.Format(time.RFC3339))
+		} else {
+			fmt.Println(entry.IP)
+		}
 	}
 	return 0
 }
 
-func openManagerFromConfig(configPath string) (*nftables.Manager, func(), error) {
+func openServiceFromConfig(configPath string) (*ban.Service, func(), error) {
 	errfile.Init(configPath)
 
 	cfg, err := config.Load(configPath)
@@ -140,7 +174,15 @@ func openManagerFromConfig(configPath string) (*nftables.Manager, func(), error)
 		return nil, nil, err
 	}
 
-	return manager, func() { _ = manager.Close() }, nil
+	service, err := openBanService(manager, configPath)
+	if err != nil {
+		_ = manager.Close()
+		errfile.Record("ban service init", err)
+		fmt.Fprintf(os.Stderr, "ban service init failed: %v\n", err)
+		return nil, nil, err
+	}
+
+	return service, func() { _ = manager.Close() }, nil
 }
 
 func writeCLIError(context string, err error) int {
@@ -150,6 +192,9 @@ func writeCLIError(context string, err error) int {
 		return 2
 	case errors.Is(err, nftables.ErrNotFound):
 		fmt.Fprintf(os.Stderr, "not found: %v\n", err)
+		return 2
+	case errors.Is(err, ban.ErrInvalidTTL), errors.Is(err, ban.ErrInvalidExpiresAt):
+		fmt.Fprintf(os.Stderr, "invalid expiration: %v\n", err)
 		return 2
 	default:
 		errfile.Record(context, err)

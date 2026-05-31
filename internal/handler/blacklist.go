@@ -3,26 +3,30 @@ package handler
 import (
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/neko-server-dev/goban/internal/errfile"
-	"github.com/neko-server-dev/goban/internal/nftables"
+	"github.com/neko-server-dev/gomanager/internal/ban"
+	"github.com/neko-server-dev/gomanager/internal/errfile"
+	"github.com/neko-server-dev/gomanager/internal/nftables"
 )
 
 type BlacklistHandler struct {
-	manager *nftables.Manager
+	service *ban.Service
 }
 
-func NewBlacklistHandler(manager *nftables.Manager) *BlacklistHandler {
-	return &BlacklistHandler{manager: manager}
+func NewBlacklistHandler(service *ban.Service) *BlacklistHandler {
+	return &BlacklistHandler{service: service}
 }
 
 type addRequest struct {
-	IP string `json:"ip" binding:"required"`
+	IP        string `json:"ip" binding:"required"`
+	TTL       string `json:"ttl,omitempty"`
+	ExpiresAt string `json:"expires_at,omitempty"`
 }
 
 type listResponse struct {
-	IPs []string `json:"ips"`
+	Entries []ban.Entry `json:"entries"`
 }
 
 type errorResponse struct {
@@ -36,16 +40,16 @@ func (h *BlacklistHandler) Register(r gin.IRoutes) {
 }
 
 func (h *BlacklistHandler) list(c *gin.Context) {
-	ips, err := h.manager.List()
+	entries, err := h.service.List()
 	if err != nil {
 		errfile.Record("blacklist list", err)
 		c.JSON(http.StatusInternalServerError, errorResponse{Error: err.Error()})
 		return
 	}
-	if ips == nil {
-		ips = []string{}
+	if entries == nil {
+		entries = []ban.Entry{}
 	}
-	c.JSON(http.StatusOK, listResponse{IPs: ips})
+	c.JSON(http.StatusOK, listResponse{Entries: entries})
 }
 
 func (h *BlacklistHandler) add(c *gin.Context) {
@@ -55,12 +59,22 @@ func (h *BlacklistHandler) add(c *gin.Context) {
 		return
 	}
 
-	if err := h.manager.Add(req.IP); err != nil {
+	expiresAt, err := parseExpiration(req.TTL, req.ExpiresAt)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		return
+	}
+
+	if err := h.service.Add(req.IP, expiresAt); err != nil {
 		writeBlacklistError(c, err)
 		return
 	}
 
-	c.JSON(http.StatusCreated, gin.H{"ip": req.IP})
+	resp := gin.H{"ip": req.IP}
+	if expiresAt != nil {
+		resp["expires_at"] = expiresAt.Format(time.RFC3339)
+	}
+	c.JSON(http.StatusCreated, resp)
 }
 
 func (h *BlacklistHandler) remove(c *gin.Context) {
@@ -70,12 +84,33 @@ func (h *BlacklistHandler) remove(c *gin.Context) {
 		return
 	}
 
-	if err := h.manager.Remove(ip); err != nil {
+	if err := h.service.Remove(ip); err != nil {
 		writeBlacklistError(c, err)
 		return
 	}
 
 	c.Status(http.StatusNoContent)
+}
+
+func parseExpiration(ttl, expiresAt string) (*time.Time, error) {
+	if ttl != "" && expiresAt != "" {
+		return nil, errors.New("specify either ttl or expires_at, not both")
+	}
+	if ttl != "" {
+		t, err := ban.ParseTTL(ttl)
+		if err != nil {
+			return nil, err
+		}
+		return &t, nil
+	}
+	if expiresAt != "" {
+		t, err := ban.ParseExpiresAt(expiresAt)
+		if err != nil {
+			return nil, err
+		}
+		return &t, nil
+	}
+	return nil, nil
 }
 
 func writeBlacklistError(c *gin.Context, err error) {
@@ -84,6 +119,8 @@ func writeBlacklistError(c *gin.Context, err error) {
 		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
 	case errors.Is(err, nftables.ErrNotFound):
 		c.JSON(http.StatusNotFound, errorResponse{Error: err.Error()})
+	case errors.Is(err, ban.ErrInvalidTTL), errors.Is(err, ban.ErrInvalidExpiresAt):
+		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
 	default:
 		errfile.Record("blacklist", err)
 		c.JSON(http.StatusInternalServerError, errorResponse{Error: err.Error()})

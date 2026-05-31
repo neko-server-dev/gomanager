@@ -1,4 +1,4 @@
-module github.com/neko-server-dev/goban
+module github.com/neko-server-dev/gomanager
 
 go 1.26.3
 
