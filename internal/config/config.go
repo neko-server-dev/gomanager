@@ -7,7 +7,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const DefaultPath = "goban.yaml"
+const DefaultPath = "gomanager.yaml"
 
 type Config struct {
 	Host             string   `yaml:"host"`
@@ -24,7 +24,7 @@ func Default() Config {
 	return Config{
 		Host:             "0.0.0.0",
 		Port:             8080,
-		TableName:        "goban",
+		TableName:        "gomanager",
 		SetName:          "blacklist",
 		ChainName:        "input",
 		ForwardChainName: "forward",

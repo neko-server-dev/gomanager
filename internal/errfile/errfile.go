@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-const DefaultFileName = "goban.error"
+const DefaultFileName = "gomanager.error"
 
 var (
 	mu   sync.Mutex
@@ -17,7 +17,7 @@ var (
 
 func Init(configPath string) {
 	if configPath == "" {
-		configPath = "goban.yaml"
+		configPath = "gomanager.yaml"
 	}
 	path = filepath.Join(filepath.Dir(configPath), DefaultFileName)
 	if abs, err := filepath.Abs(path); err == nil {

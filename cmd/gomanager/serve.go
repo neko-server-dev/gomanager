@@ -12,6 +12,7 @@ import (
 	"github.com/neko-server-dev/gomanager/internal/config"
 	"github.com/neko-server-dev/gomanager/internal/errfile"
 	"github.com/neko-server-dev/gomanager/internal/handler"
+	"github.com/neko-server-dev/gomanager/internal/netstats"
 	"github.com/neko-server-dev/gomanager/internal/nftables"
 )
 
@@ -73,11 +74,18 @@ func runServe(args []string) int {
 
 	r.GET("/health", handler.Health)
 
+	collector, err := netstats.NewCollector(*configPath, cfg.NICs)
+	if err != nil {
+		errfile.Record("network stats init", err)
+		log.Fatalf("network stats init failed: %v", err)
+	}
+
 	api := r.Group("/api/v1")
 	handler.NewBlacklistHandler(service).Register(api)
+	handler.NewNetworkHandler(collector).Register(api)
 
 	addr := cfg.ListenAddr()
-	log.Printf("goban listening on %s", addr)
+	log.Printf("gomanager listening on %s", addr)
 	if err := r.Run(addr); err != nil {
 		errfile.Record("server", err)
 		log.Fatalf("server failed: %v", err)

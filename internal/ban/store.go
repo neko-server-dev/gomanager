@@ -21,10 +21,10 @@ func NewStore(configPath string) *Store {
 	ext := filepath.Ext(base)
 	name := base[:len(base)-len(ext)]
 	if name == "" {
-		name = "goban"
+		name = "gomanager"
 	}
 	return &Store{
-		path: filepath.Join(dir, name+".expires.json"),
+		path: filepath.Join(dir, name+".blacklist.json"),
 		data: make(map[string]time.Time),
 	}
 }

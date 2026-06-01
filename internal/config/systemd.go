@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-const DefaultServiceFileName = "goban.service"
+const DefaultServiceFileName = "gomanager.service"
 
 func EnsureServiceFile(configPath string) error {
 	if configPath == "" {
@@ -47,8 +47,8 @@ func renderService(execPath, configPath string) string {
 
 	var b strings.Builder
 	b.WriteString("[Unit]\n")
-	b.WriteString("Description=goban IP blacklist API\n")
-	b.WriteString("Documentation=https://github.com/neko-server-dev/goban\n")
+	b.WriteString("Description=gomanager IP blacklist API\n")
+	b.WriteString("Documentation=https://github.com/neko-server-dev/gomanager\n")
 	b.WriteString("After=network-online.target\n")
 	b.WriteString("Wants=network-online.target\n\n")
 
